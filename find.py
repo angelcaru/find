@@ -16,6 +16,10 @@ class TokenType(Enum):
 
 # <classes>
 
+Error = str # TODO: proper error reporting (replace "str" with a custom class "Error" or something)
+ParseResult = Tuple[Optional["Node"], Optional[Error]]
+RuntimeResult = Tuple[Optional[Any], Optional[Error]]
+
 @dataclass
 class Flags:
     pass
@@ -38,6 +42,10 @@ class Node(ABC):
     def __repr__(self) -> str:
         ...
 
+    @abstractmethod
+    def visit(self, input_: str) -> RuntimeResult:
+        ...
+
 @dataclass
 class ReplaceNode(Node):
     query: Node
@@ -45,6 +53,24 @@ class ReplaceNode(Node):
 
     def __repr__(self) -> str:
         return f"({self.query}) -> ({self.replacement})"
+    
+    def visit(self, input_: str) -> RuntimeResult:
+        val, err = self.query.visit(input_)
+        if err is not None: return None, err
+        assert val is not None
+        if not isinstance(val, str):
+            return None, "wrong data type for query; expected string"
+
+        idx: int = input_.find(val)
+        idx_end: int = idx + len(val)
+
+        rep, err = self.replacement.visit(input_)
+        if err is not None: return None, err
+        assert rep is not None
+        if not isinstance(rep, str):
+            return None, "wrong data type for replacement; expected string"
+        
+        return input_[:idx] + rep + input_[idx_end:], None
 
 @dataclass
 class StringNode(Node):
@@ -58,12 +84,12 @@ class StringNode(Node):
     def __repr__(self) -> str:
         assert self.tok.value is not None, "This could be a bug in the StringNode.__new__() method"
         return repr(self.tok)
+    
+    def visit(self, input_: str) -> RuntimeResult:
+        assert isinstance(self.tok.value, str)
+        return self.tok.value, None
 
 # </classes>
-
-Error = str # TODO: proper error reporting (replace "str" with a custom class "Error" or something)
-ParseResult = Tuple[Optional[Node], Optional[Error]]
-RuntimeResult = Tuple[Optional[Any], Optional[Error]]
 
 def lex_string(it: Iterator[str]) -> Tuple[Optional[Token], Optional[Error]]:
     string: str = ""
@@ -100,38 +126,6 @@ def parse_expr(it: Iterator[Token]) -> ParseResult:
     if tok.type_ != TokenType.STRING:
         return None, "expected string"
     return StringNode(tok), None
-
-def perform_match(query_node: Node, input_: str) -> RuntimeResult:
-    assert isinstance(query_node, StringNode)
-    value_to_find = query_node.tok.value
-    assert isinstance(value_to_find, str)
-    idx: int = input_.find(value_to_find)
-    return (idx, idx + len(value_to_find)), None
-
-def perform_replacement(replacement_node: Node, input_: str) -> RuntimeResult:
-    assert isinstance(replacement_node, StringNode)
-    return replacement_node.tok.value, None
-
-def perform_ast(ast: Node, input_: str) -> RuntimeResult:
-    assert isinstance(ast, ReplaceNode)
-    i = input_
-
-    res, err = perform_match(ast.query, i)
-    assert res is not None
-
-    idx, idx_end = res
-    if err is not None:
-        return None, err
-    assert isinstance(idx, int)
-    assert isinstance(idx_end, int)
-
-    rep, err = perform_replacement(ast.replacement, input_)
-    if err is not None:
-        return None, err
-    assert isinstance(rep, str)
-
-    res = i[:idx] + rep + i[idx_end:]
-    return res, None
 
 def parse(tokens: Iterable[Token]) -> ParseResult:
     it = iter(tokens)
@@ -220,7 +214,7 @@ def main(argv: List[str]):
         error(err)
     assert isinstance(ast, Node)
     
-    res, err = perform_ast(ast, input_)
+    res, err = ast.visit(input_)
     if err is not None:
         error(err)
     assert isinstance(res, str)
