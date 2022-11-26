@@ -22,7 +22,7 @@ RuntimeResult = Tuple[Optional[Any], Optional[Error]]
 
 @dataclass
 class Flags:
-    pass
+    debug: bool = False
 flags = Flags() # global variable, oh no
 
 @dataclass
@@ -172,8 +172,8 @@ def main(argv: List[str]):
         if len(argv) < 1:
             usage(program_name, "no filename provided")
         flag, *argv = argv
-        if flag == ...: # TODO: create flags
-            pass # flags.(...) = True
+        if flag == "--debug":
+            flags.debug = True
         else:
             argv.insert(0, flag) # flag actually contains the next arg of the program, so this makes sense
             break
@@ -209,9 +209,14 @@ def main(argv: List[str]):
         if e.value is not None:
             error(e.value)
     
+    if flags.debug:
+        print(f"[DEBUG] Lexer output: {tokens}")
+    
     ast, err = parse(tokens)
     if err is not None:
         error(err)
+    if flags.debug:
+        print(f"[DEBUG] Parser output: {ast}")
     assert isinstance(ast, Node)
     
     res, err = ast.visit(input_)
