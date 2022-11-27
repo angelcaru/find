@@ -1,5 +1,4 @@
 root     : exprs ARROW exprs
 
-exprs    : LPAREN expr* RPAREN
-
-expr     : STRING
+expr     : LPAREN expr* RPAREN
+         : STRING

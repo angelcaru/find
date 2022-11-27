@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 class TokenType(Enum):
     STRING=auto()
     ARROW=auto()
+    LPAREN=auto()
+    RPAREN=auto()
 
 # </enums>
 
@@ -89,6 +91,23 @@ class StringNode(Node):
         assert isinstance(self.tok.value, str)
         return self.tok.value, None
 
+@dataclass
+class ConcatNode(Node):
+    nodes: List[Node]
+
+    def __repr__(self) -> str:
+        return "(" + " ".join(map(repr, self.nodes)) + ")"
+    
+    def visit(self, input_: str) -> RuntimeResult:
+        res = ""
+        for node in self.nodes:
+            val, err = node.visit(input_)
+            if err is not None: return None, err
+            assert val is not None
+
+            res += str(val)
+        return res, None
+
 # </classes>
 
 def lex_string(it: Iterator[str]) -> Tuple[Optional[Token], Optional[Error]]:
@@ -101,11 +120,18 @@ def lex_string(it: Iterator[str]) -> Tuple[Optional[Token], Optional[Error]]:
         return None, "EOF while parsing string, did you forget a '\"'?"
     return Token(TokenType.STRING, string), None
 
+single_char_toks: Dict[str, TokenType] = {
+    "(": TokenType.LPAREN,
+    ")": TokenType.RPAREN,
+}
+
 def lex(code: str) -> Generator[Token, None, Optional[Error]]:
     it = iter(code)
     for char in it:
         if char.isspace():
             pass
+        elif char in single_char_toks:
+            yield Token(single_char_toks[char])
         elif char == '"':
             tok, err = lex_string(it)
             if err is not None:
@@ -121,15 +147,48 @@ def lex(code: str) -> Generator[Token, None, Optional[Error]]:
             return f"Unknown character '{char}'"
     return None
 
-def parse_expr(it: Iterator[Token]) -> ParseResult:
-    tok = next(it)
-    if tok.type_ != TokenType.STRING:
-        return None, "expected string"
-    return StringNode(tok), None
+TT_NAMES: Dict[TokenType, str] = {
+    TokenType.ARROW:  "'->'",
+    TokenType.STRING: "string",
+    TokenType.LPAREN: "'('",
+    TokenType.RPAREN: "')'",
+}
+
+def expect(expected: List[TokenType], actual: TokenType) -> str:
+    expected_type_names: List[str] = []
+    for tt in expected:
+        expected_type_names.append(TT_NAMES[tt])
+    return f"expected {human_chain(expected_type_names)}, but got {TT_NAMES[actual]}"
+
+def human_chain(elts: List[str], sep: str=", ", last_word: str="or") -> str:
+    result: str = ""
+    for i, elt in enumerate(elts):
+        result += elt
+        if i < len(elts) - 2:
+            result += sep
+        elif i == len(elts) - 2:
+            result += f" {last_word} "
+    return result
+
+def parse_expr(it: Iterator[Token], tok: Token) -> ParseResult:
+    if tok.type_ != TokenType.LPAREN and tok.type_ != TokenType.STRING:
+        return None, expect([TokenType.LPAREN, TokenType.STRING], tok.type_)
+    elif tok.type_ == TokenType.STRING:
+        return StringNode(tok), None
+    
+    nodes: List[Node] = []
+    while (tok := next(it)).type_ != TokenType.RPAREN:
+        node, err = parse_expr(it, tok)
+        if err is not None: return None, err
+        assert isinstance(node, Node)
+
+        nodes.append(node)
+    
+    return ConcatNode(nodes), None
 
 def parse(tokens: Iterable[Token]) -> ParseResult:
     it = iter(tokens)
-    query, err = parse_expr(it)
+    query, err = parse_expr(it, next(it))
     if err: return None, err
     assert isinstance(query, Node)
 
@@ -138,9 +197,9 @@ def parse(tokens: Iterable[Token]) -> ParseResult:
     except StopIteration:
         return None, "EOF while parsing replacement"
     if tok.type_ != TokenType.ARROW:
-        return None, "Expected '->'"
+        return None, expect([TokenType.ARROW], tok.type_)
 
-    replacement, err = parse_expr(it)
+    replacement, err = parse_expr(it, next(it))
     if err: return None, err
     assert isinstance(replacement, Node)
 
